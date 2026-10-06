@@ -154,6 +154,19 @@ export default async function handler(req: Request): Promise<Response> {
       });
     }
 
+    if (action === "verify_email") {
+      const { data: target, error: targetError } = await supabase.auth.admin.getUserById(targetUserId);
+      if (targetError || !target.user) throw targetError || new Error("Пользователь не найден");
+      if (!target.user.email) throw new Error("У пользователя не указана почта");
+      if (!target.user.email_confirmed_at) {
+        const { error } = await supabase.auth.admin.updateUserById(targetUserId, { email_confirm: true });
+        if (error) throw error;
+      }
+      return new Response(JSON.stringify({ success: true, alreadyVerified: Boolean(target.user.email_confirmed_at) }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     if (action === "ban") {
       await supabase.from("profiles").update({ banned }).eq("id", targetUserId);
       if (banned) {
