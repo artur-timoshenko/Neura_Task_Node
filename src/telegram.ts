@@ -165,7 +165,7 @@ export async function notify(name: string, body: any, access: Access, config: Co
       [openButton],
     ] };
   if (!process.env.TELEGRAM_BOT_TOKEN) return { success: true, sent: 0, skipped: 'Telegram not configured' };
-  if (!personal && !workingHours() && chatIds.length) {
+  if (!workingHours() && chatIds.length) {
     const { error } = await admin.from('telegram_deferred_messages').insert({ chat_ids: chatIds, text, parse_mode: 'HTML' });
     if (error) throw new HttpError(503, 'Notification queue unavailable');
     return { success: true, deferred: chatIds.length, sent: 0 };
