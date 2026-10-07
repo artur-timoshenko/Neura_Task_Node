@@ -43,16 +43,17 @@ export async function runFunction(name: string, body: any, access: Access, confi
       .replace(/\s+/g, ' ')
       .slice(-180);
     const path = `${task.id}/submissions/${Date.now()}_${randomUUID()}_${safeName}`;
-    const { data, error } = await admin.storage.from('task-files').createSignedUploadUrl(path, { upsert: false });
-    if (error || !data) throw new HttpError(502, 'Не удалось подготовить загрузку');
-    // The signed token authorizes this single object path. Supabase's API
-    // gateway still requires the public project key on the direct upload.
+    const storageOrigin = new URL(config.supabaseUrl);
+    if (storageOrigin.hostname.endsWith('.supabase.co') && !storageOrigin.hostname.endsWith('.storage.supabase.co')) {
+      storageOrigin.hostname = storageOrigin.hostname.replace(/\.supabase\.co$/, '.storage.supabase.co');
+    }
+    // Large videos are sent directly to Storage with resumable TUS chunks.
+    // Storage RLS checks this path and the caller's user JWT once more.
     return Response.json({
-      signedUrl: data.signedUrl,
       path,
+      resumableUrl: `${storageOrigin.origin}/storage/v1/upload/resumable`,
       uploadHeaders: {
         apikey: config.anonKey,
-        authorization: `Bearer ${config.anonKey}`,
       },
     });
   }
