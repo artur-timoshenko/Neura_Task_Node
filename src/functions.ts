@@ -45,7 +45,16 @@ export async function runFunction(name: string, body: any, access: Access, confi
     const path = `${task.id}/submissions/${Date.now()}_${randomUUID()}_${safeName}`;
     const { data, error } = await admin.storage.from('task-files').createSignedUploadUrl(path, { upsert: false });
     if (error || !data) throw new HttpError(502, 'Не удалось подготовить загрузку');
-    return Response.json({ signedUrl: data.signedUrl, path });
+    // The signed token authorizes this single object path. Supabase's API
+    // gateway still requires the public project key on the direct upload.
+    return Response.json({
+      signedUrl: data.signedUrl,
+      path,
+      uploadHeaders: {
+        apikey: config.anonKey,
+        authorization: `Bearer ${config.anonKey}`,
+      },
+    });
   }
   if (name === 'activate-admin') {
     // Knowledge of a shared code alone must never grant administrative access.
