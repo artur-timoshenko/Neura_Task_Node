@@ -51,8 +51,15 @@ export function queuedNotificationPreview(text: string, appUrl: string) {
 }
 
 export function workingHours(date = new Date()) {
-  const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Kyiv', hourCycle: 'h23', hour: '2-digit' }).format(date));
-  return hour >= 5 && hour < 19;
+  const timeZone = process.env.TELEGRAM_TIMEZONE || 'Europe/Kyiv';
+  const start = Number.parseInt(process.env.TELEGRAM_START_HOUR || '10', 10);
+  const end = Number.parseInt(process.env.TELEGRAM_END_HOUR || '19', 10);
+  const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', hour: '2-digit' }).format(date));
+  const validStart = Number.isInteger(start) && start >= 0 && start <= 23 ? start : 10;
+  const validEnd = Number.isInteger(end) && end >= 0 && end <= 23 ? end : 19;
+  return validStart < validEnd
+    ? hour >= validStart && hour < validEnd
+    : hour >= validStart || hour < validEnd;
 }
 function safeTelegramError(error: unknown): string {
   const detail = error as { message?: string; code?: string; cause?: { message?: string; code?: string } } | null;
@@ -122,8 +129,8 @@ export async function notify(name: string, body: any, access: Access, config: Co
   } else if (name !== 'notify-telegram-chat') throw new HttpError(400, 'Task required');
   if (name === 'notify-telegram-chat') {
     let query = access.db.from(task ? 'task_chat_messages' : 'buyer_chat_messages')
-        .select('body,image_url,as_buyer,created_at').eq('sender_id', access.user.id)
-        .gte('created_at', new Date(Date.now() - 120_000).toISOString()).order('created_at', { ascending: false }).limit(1);
+      .select('body,image_url,as_buyer,created_at').eq('sender_id', access.user.id)
+      .gte('created_at', new Date(Date.now() - 120_000).toISOString()).order('created_at', { ascending: false }).limit(1);
     if (task) query = query.eq('task_id', task.id);
     else {
       if (!uuid(body.designerId) || !uuid(body.buyerId)) throw new HttpError(400, 'Chat participants required');
@@ -158,13 +165,15 @@ export async function notify(name: string, body: any, access: Access, config: Co
   // New-task/corrections messages match the reference: text link + small branded preview.
   if (name === 'notify-telegram-chat') payload.reply_markup = { inline_keyboard: [[openButton]] };
   if (name === 'notify-telegram') payload.reply_markup = { inline_keyboard: [
-      [
-        { text: '🔄 На правки', callback_data: 'corrections:' + task.id },
-        { text: '✅ Выполнено', callback_data: 'done:' + task.id },
-      ],
-      [openButton],
-    ] };
+    [
+      { text: '🔄 На правки', callback_data: 'corrections:' + task.id },
+      { text: '✅ Выполнено', callback_data: 'done:' + task.id },
+    ],
+    [openButton],
+  ] };
   if (!process.env.TELEGRAM_BOT_TOKEN) return { success: true, sent: 0, skipped: 'Telegram not configured' };
+  // Every user-facing notification observes quiet hours. `personal` only
+  // selects recipients and must never bypass the delivery window.
   if (!workingHours() && chatIds.length) {
     const { error } = await admin.from('telegram_deferred_messages').insert({ chat_ids: chatIds, text, parse_mode: 'HTML' });
     if (error) throw new HttpError(503, 'Notification queue unavailable');
@@ -211,8 +220,8 @@ export function startTelegramWorker(config: Config) {
                 if (designer.error) throw designer.error;
                 const chatIds = await targets(admin, changed.user_id, false);
                 const link = changed.task_code
-                    ? config.appUrl + '/task/' + encodeURIComponent(String(changed.task_code).replace(/^#+/, ''))
-                    : config.appUrl;
+                  ? config.appUrl + '/task/' + encodeURIComponent(String(changed.task_code).replace(/^#+/, ''))
+                  : config.appUrl;
                 const text = formatNotification({
                   heading: '🔄 Задача отправлена на правки', link, actorName: '', task: changed,
                   designerName: designer.data?.name,
