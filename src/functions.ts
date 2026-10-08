@@ -47,14 +47,18 @@ export async function runFunction(name: string, body: any, access: Access, confi
     if (storageOrigin.hostname.endsWith('.supabase.co') && !storageOrigin.hostname.endsWith('.storage.supabase.co')) {
       storageOrigin.hostname = storageOrigin.hostname.replace(/\.supabase\.co$/, '.storage.supabase.co');
     }
+    const { data: uploadGrant, error: uploadGrantError } = await admin.storage
+      .from('task-files')
+      .createSignedUploadUrl(path, { upsert: false });
+    if (uploadGrantError || !uploadGrant?.token) {
+      throw new HttpError(502, 'Не удалось подготовить загрузку');
+    }
     // Large videos are sent directly to Storage with resumable TUS chunks.
     // Storage RLS checks this path and the caller's user JWT once more.
     return Response.json({
       path,
       resumableUrl: `${storageOrigin.origin}/storage/v1/upload/resumable`,
-      uploadHeaders: {
-        apikey: config.anonKey,
-      },
+      uploadToken: uploadGrant.token,
     });
   }
   if (name === 'activate-admin') {
