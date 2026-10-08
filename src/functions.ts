@@ -48,19 +48,26 @@ export async function runFunction(name: string, body: any, access: Access, confi
       storageOrigin.hostname = storageOrigin.hostname.replace(/\.supabase\.co$/, '.storage.supabase.co');
     }
     const { data: uploadGrant, error: uploadGrantError } = await admin.storage
-      .from('task-files')
-      .createSignedUploadUrl(path, { upsert: false });
-    if (uploadGrantError || !uploadGrant?.token) {
-      throw new HttpError(502, 'Не удалось подготовить загрузку');
-    }
-    // Large videos are sent directly to Storage with resumable TUS chunks.
-    // Storage RLS checks this path and the caller's user JWT once more.
-    return Response.json({
-      path,
-      resumableUrl: `${storageOrigin.origin}/storage/v1/upload/resumable`,
-      uploadToken: uploadGrant.token,
-    });
-  }
+  .from("task-files")
+  .createSignedUploadUrl(path, { upsert: false });
+
+if (uploadGrantError || !uploadGrant?.token) {
+  console.error("createSignedUploadUrl failed:", {
+    message: uploadGrantError?.message,
+    statusCode: (uploadGrantError as any)?.statusCode,
+    error: (uploadGrantError as any)?.error,
+    bucket: "task-files",
+    path,
+  });
+
+  throw new HttpError(502, "Не удалось подготовить загрузку");
+}
+
+return Response.json({
+  path,
+  resumableUrl: `${storageOrigin.origin}/storage/v1/upload/resumable`,
+  uploadToken: uploadGrant.token,
+});
   if (name === 'activate-admin') {
     // Knowledge of a shared code alone must never grant administrative access.
     const emails = (process.env.ADMIN_BOOTSTRAP_EMAILS || '').toLowerCase().split(',').map(s => s.trim());
