@@ -26,7 +26,8 @@ export function createApp(config: Config) {
   app.get('/api/health', (_req, res) => res.json({
     ok: true,
     service: 'team-task-hub-backend',
-    version: '2026-10-08-upload-v3',
+    version: '2026-10-08-railway-bucket-v1',
+    bucket: Boolean(config.bucket),
   }));
   app.use('/api', rateLimit({ windowMs: 60_000, limit: 600, standardHeaders: 'draft-8', legacyHeaders: false }));
   app.use('/api', (req, res, next) => {
