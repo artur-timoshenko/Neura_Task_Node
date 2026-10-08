@@ -5,6 +5,31 @@ import { HttpError, uuid } from './policy.js';
 import adminManageUser from './handlers/admin-manage-user.js';
 import recordVisit from './handlers/record-visit.js';
 import { notify } from './telegram.js';
+import { createTaskDownloadUrl, createTaskUploadUrl, deleteTaskObject, isRailwayTaskFile } from './bucket.js';
+
+async function canAccessTask(admin: any, access: Access, taskId: string) {
+  const { data: task, error } = await admin
+    .from('tasks')
+    .select('id,user_id,buyer_id')
+    .eq('id', taskId)
+    .maybeSingle();
+  if (error) throw new HttpError(503, 'Не удалось проверить задачу');
+  if (!task) throw new HttpError(404, 'Задача не найдена');
+
+  let allowed = access.role === 'admin' || task.user_id === access.user.id || task.buyer_id === access.user.id;
+  if (!allowed && access.role === 'teamlead') {
+    const { data: membership, error: membershipError } = await admin
+      .from('team_memberships')
+      .select('member_id')
+      .eq('teamlead_id', access.user.id)
+      .eq('member_id', task.user_id)
+      .maybeSingle();
+    if (membershipError) throw new HttpError(503, 'Не удалось проверить доступ');
+    allowed = Boolean(membership);
+  }
+  if (!allowed) throw new HttpError(403, 'Нет доступа к файлам этой задачи');
+  return task;
+}
 
 export async function runFunction(name: string, body: any, access: Access, config: Config) {
   const { admin } = clients(config);
@@ -17,70 +42,68 @@ export async function runFunction(name: string, body: any, access: Access, confi
       throw new HttpError(400, 'Некорректный размер файла');
     }
 
-    const { data: task, error: taskError } = await admin
-      .from('tasks')
-      .select('id,user_id')
-      .eq('id', body.taskId)
-      .maybeSingle();
-    if (taskError) throw new HttpError(503, 'Не удалось проверить задачу');
-    if (!task) throw new HttpError(404, 'Задача не найдена');
-
-    let allowed = access.role === 'admin' || task.user_id === access.user.id;
-    if (!allowed && access.role === 'teamlead') {
-      const { data: membership, error: membershipError } = await admin
-        .from('team_memberships')
-        .select('member_id')
-        .eq('teamlead_id', access.user.id)
-        .eq('member_id', task.user_id)
-        .maybeSingle();
-      if (membershipError) throw new HttpError(503, 'Не удалось проверить доступ');
-      allowed = Boolean(membership);
+    const task = await canAccessTask(admin, access, body.taskId);
+    const category = body.category === 'attachment' ? 'attachment' : body.category === 'submission' || body.category == null
+      ? 'submission'
+      : null;
+    if (!category) throw new HttpError(400, 'Некорректная категория файла');
+    if (category === 'submission' && access.role !== 'admin' && task.user_id !== access.user.id) {
+      throw new HttpError(403, 'Сдать задачу может только исполнитель или администратор');
     }
-    if (!allowed) throw new HttpError(403, 'Нет доступа к сдаче этой задачи');
 
     const safeName = body.fileName.trim().normalize('NFKC')
       .replace(/[\\/\u0000-\u001f\u007f]/g, '_')
       .replace(/\s+/g, ' ')
       .slice(-180);
-    const path = `${task.id}/submissions/${Date.now()}_${randomUUID()}_${safeName}`;
-    const { error: bucketError } = await admin.storage.getBucket('task-files');
-    if (bucketError) {
-      const bucketStatus = Number((bucketError as any).statusCode || (bucketError as any).status);
-      if (bucketStatus === 404) {
-        const { error: createBucketError } = await admin.storage.createBucket('task-files', { public: false });
-        if (createBucketError) {
-          console.error('task-files bucket creation failed', {
-            message: createBucketError.message,
-            statusCode: (createBucketError as any).statusCode,
-          });
-          throw new HttpError(502, `Storage bucket: ${createBucketError.message}`);
-        }
-      } else {
-        console.error('task-files bucket check failed', {
-          message: bucketError.message,
-          statusCode: (bucketError as any).statusCode,
-        });
-        throw new HttpError(502, `Storage bucket: ${bucketError.message}`);
-      }
+    const folder = category === 'submission' ? `${task.id}/submissions` : task.id;
+    const relativePath = `${folder}/${Date.now()}_${randomUUID()}_${safeName}`;
+    const contentType = typeof body.contentType === 'string' && body.contentType.length <= 200 &&
+      /^[\w.+-]+\/[\w.+-]+$/.test(body.contentType)
+      ? body.contentType
+      : 'application/octet-stream';
+    return Response.json(await createTaskUploadUrl(config, relativePath, contentType, body.fileSize));
+  }
+  if (name === 'sign-task-file') {
+    if (typeof body.filePath !== 'string' || !isRailwayTaskFile(body.filePath)) {
+      throw new HttpError(400, 'Некорректный путь файла');
     }
-    const { data: uploadGrant, error: uploadGrantError } = await admin.storage
-      .from('task-files')
-      .createSignedUploadUrl(path, { upsert: false });
-    if (uploadGrantError || !uploadGrant?.token) {
-      console.error('createSignedUploadUrl failed', {
-        message: uploadGrantError?.message,
-        statusCode: (uploadGrantError as any)?.statusCode,
-        bucket: 'task-files',
-        path,
-      });
-      throw new HttpError(502, `Storage upload: ${uploadGrantError?.message || 'token was not returned'}`);
+    const { data: attachment, error } = await admin
+      .from('task_attachments')
+      .select('task_id,file_name')
+      .eq('file_path', body.filePath)
+      .maybeSingle();
+    if (error) throw new HttpError(503, 'Не удалось проверить файл');
+    if (!attachment) throw new HttpError(404, 'Файл не найден');
+    await canAccessTask(admin, access, attachment.task_id);
+    const downloadName = body.download === true
+      ? attachment.file_name
+      : typeof body.download === 'string' && body.download.length <= 255
+        ? body.download
+        : undefined;
+    const signedUrl = await createTaskDownloadUrl(config, body.filePath, downloadName);
+    return Response.json({ signedUrl, expiresIn: 3600 });
+  }
+  if (name === 'delete-task-file') {
+    if (typeof body.filePath !== 'string' || !isRailwayTaskFile(body.filePath)) {
+      throw new HttpError(400, 'Некорректный путь файла');
     }
-    // Large videos are sent directly to Storage with resumable TUS chunks.
-    // Storage RLS checks this path and the caller's user JWT once more.
-    return Response.json({
-      path,
-      signedUrl: uploadGrant.signedUrl,
-    });
+    const { data: attachment, error } = await admin
+      .from('task_attachments')
+      .select('task_id,user_id')
+      .eq('file_path', body.filePath)
+      .maybeSingle();
+    if (error) throw new HttpError(503, 'Не удалось проверить файл');
+    const taskId = attachment?.task_id || body.taskId;
+    if (!uuid(taskId)) throw new HttpError(404, 'Файл не найден');
+    if (!body.filePath.startsWith(`railway/${taskId}/`)) {
+      throw new HttpError(400, 'Путь файла не принадлежит задаче');
+    }
+    await canAccessTask(admin, access, taskId);
+    if (access.role !== 'admin' && attachment && attachment.user_id !== access.user.id && access.role !== 'teamlead') {
+      throw new HttpError(403, 'Удалить файл может автор или администратор');
+    }
+    await deleteTaskObject(config, body.filePath);
+    return Response.json({ success: true });
   }
   if (name === 'activate-admin') {
     // Knowledge of a shared code alone must never grant administrative access.
