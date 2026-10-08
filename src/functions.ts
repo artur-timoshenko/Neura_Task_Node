@@ -43,10 +43,6 @@ export async function runFunction(name: string, body: any, access: Access, confi
       .replace(/\s+/g, ' ')
       .slice(-180);
     const path = `${task.id}/submissions/${Date.now()}_${randomUUID()}_${safeName}`;
-    const storageOrigin = new URL(config.supabaseUrl);
-    if (storageOrigin.hostname.endsWith('.supabase.co') && !storageOrigin.hostname.endsWith('.storage.supabase.co')) {
-      storageOrigin.hostname = storageOrigin.hostname.replace(/\.supabase\.co$/, '.storage.supabase.co');
-    }
     const { error: bucketError } = await admin.storage.getBucket('task-files');
     if (bucketError) {
       const bucketStatus = Number((bucketError as any).statusCode || (bucketError as any).status);
@@ -83,8 +79,7 @@ export async function runFunction(name: string, body: any, access: Access, confi
     // Storage RLS checks this path and the caller's user JWT once more.
     return Response.json({
       path,
-      resumableUrl: `${storageOrigin.origin}/storage/v1/upload/resumable`,
-      uploadToken: uploadGrant.token,
+      signedUrl: uploadGrant.signedUrl,
     });
   }
   if (name === 'activate-admin') {
