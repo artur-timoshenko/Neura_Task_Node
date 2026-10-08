@@ -18,30 +18,30 @@ export async function runFunction(name: string, body: any, access: Access, confi
     }
 
     const { data: task, error: taskError } = await admin
-      .from('tasks')
-      .select('id,user_id')
-      .eq('id', body.taskId)
-      .maybeSingle();
+        .from('tasks')
+        .select('id,user_id')
+        .eq('id', body.taskId)
+        .maybeSingle();
     if (taskError) throw new HttpError(503, 'Не удалось проверить задачу');
     if (!task) throw new HttpError(404, 'Задача не найдена');
 
     let allowed = access.role === 'admin' || task.user_id === access.user.id;
     if (!allowed && access.role === 'teamlead') {
       const { data: membership, error: membershipError } = await admin
-        .from('team_memberships')
-        .select('member_id')
-        .eq('teamlead_id', access.user.id)
-        .eq('member_id', task.user_id)
-        .maybeSingle();
+          .from('team_memberships')
+          .select('member_id')
+          .eq('teamlead_id', access.user.id)
+          .eq('member_id', task.user_id)
+          .maybeSingle();
       if (membershipError) throw new HttpError(503, 'Не удалось проверить доступ');
       allowed = Boolean(membership);
     }
     if (!allowed) throw new HttpError(403, 'Нет доступа к сдаче этой задачи');
 
     const safeName = body.fileName.trim().normalize('NFKC')
-      .replace(/[\\/\u0000-\u001f\u007f]/g, '_')
-      .replace(/\s+/g, ' ')
-      .slice(-180);
+        .replace(/[\\/\u0000-\u001f\u007f]/g, '_')
+        .replace(/\s+/g, ' ')
+        .slice(-180);
     const path = `${task.id}/submissions/${Date.now()}_${randomUUID()}_${safeName}`;
     const storageOrigin = new URL(config.supabaseUrl);
     if (storageOrigin.hostname.endsWith('.supabase.co') && !storageOrigin.hostname.endsWith('.storage.supabase.co')) {
@@ -67,7 +67,7 @@ return Response.json({
   path,
   resumableUrl: `${storageOrigin.origin}/storage/v1/upload/resumable`,
   uploadToken: uploadGrant.token,
-});
+})
   if (name === 'activate-admin') {
     // Knowledge of a shared code alone must never grant administrative access.
     const emails = (process.env.ADMIN_BOOTSTRAP_EMAILS || '').toLowerCase().split(',').map(s => s.trim());
