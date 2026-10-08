@@ -18,56 +18,75 @@ export async function runFunction(name: string, body: any, access: Access, confi
     }
 
     const { data: task, error: taskError } = await admin
-        .from('tasks')
-        .select('id,user_id')
-        .eq('id', body.taskId)
-        .maybeSingle();
+      .from('tasks')
+      .select('id,user_id')
+      .eq('id', body.taskId)
+      .maybeSingle();
     if (taskError) throw new HttpError(503, 'Не удалось проверить задачу');
     if (!task) throw new HttpError(404, 'Задача не найдена');
 
     let allowed = access.role === 'admin' || task.user_id === access.user.id;
     if (!allowed && access.role === 'teamlead') {
       const { data: membership, error: membershipError } = await admin
-          .from('team_memberships')
-          .select('member_id')
-          .eq('teamlead_id', access.user.id)
-          .eq('member_id', task.user_id)
-          .maybeSingle();
+        .from('team_memberships')
+        .select('member_id')
+        .eq('teamlead_id', access.user.id)
+        .eq('member_id', task.user_id)
+        .maybeSingle();
       if (membershipError) throw new HttpError(503, 'Не удалось проверить доступ');
       allowed = Boolean(membership);
     }
     if (!allowed) throw new HttpError(403, 'Нет доступа к сдаче этой задачи');
 
     const safeName = body.fileName.trim().normalize('NFKC')
-        .replace(/[\\/\u0000-\u001f\u007f]/g, '_')
-        .replace(/\s+/g, ' ')
-        .slice(-180);
+      .replace(/[\\/\u0000-\u001f\u007f]/g, '_')
+      .replace(/\s+/g, ' ')
+      .slice(-180);
     const path = `${task.id}/submissions/${Date.now()}_${randomUUID()}_${safeName}`;
     const storageOrigin = new URL(config.supabaseUrl);
     if (storageOrigin.hostname.endsWith('.supabase.co') && !storageOrigin.hostname.endsWith('.storage.supabase.co')) {
       storageOrigin.hostname = storageOrigin.hostname.replace(/\.supabase\.co$/, '.storage.supabase.co');
     }
+    const { error: bucketError } = await admin.storage.getBucket('task-files');
+    if (bucketError) {
+      const bucketStatus = Number((bucketError as any).statusCode || (bucketError as any).status);
+      if (bucketStatus === 404) {
+        const { error: createBucketError } = await admin.storage.createBucket('task-files', { public: false });
+        if (createBucketError) {
+          console.error('task-files bucket creation failed', {
+            message: createBucketError.message,
+            statusCode: (createBucketError as any).statusCode,
+          });
+          throw new HttpError(502, `Storage bucket: ${createBucketError.message}`);
+        }
+      } else {
+        console.error('task-files bucket check failed', {
+          message: bucketError.message,
+          statusCode: (bucketError as any).statusCode,
+        });
+        throw new HttpError(502, `Storage bucket: ${bucketError.message}`);
+      }
+    }
     const { data: uploadGrant, error: uploadGrantError } = await admin.storage
-  .from("task-files")
-  .createSignedUploadUrl(path, { upsert: false });
-
-if (uploadGrantError || !uploadGrant?.token) {
-  console.error("createSignedUploadUrl failed:", {
-    message: uploadGrantError?.message,
-    statusCode: (uploadGrantError as any)?.statusCode,
-    error: (uploadGrantError as any)?.error,
-    bucket: "task-files",
-    path,
-  });
-
-  throw new HttpError(502, "Не удалось подготовить загрузку");
-}
-
-return Response.json({
-  path,
-  resumableUrl: `${storageOrigin.origin}/storage/v1/upload/resumable`,
-  uploadToken: uploadGrant.token,
-})
+      .from('task-files')
+      .createSignedUploadUrl(path, { upsert: false });
+    if (uploadGrantError || !uploadGrant?.token) {
+      console.error('createSignedUploadUrl failed', {
+        message: uploadGrantError?.message,
+        statusCode: (uploadGrantError as any)?.statusCode,
+        bucket: 'task-files',
+        path,
+      });
+      throw new HttpError(502, `Storage upload: ${uploadGrantError?.message || 'token was not returned'}`);
+    }
+    // Large videos are sent directly to Storage with resumable TUS chunks.
+    // Storage RLS checks this path and the caller's user JWT once more.
+    return Response.json({
+      path,
+      resumableUrl: `${storageOrigin.origin}/storage/v1/upload/resumable`,
+      uploadToken: uploadGrant.token,
+    });
+  }
   if (name === 'activate-admin') {
     // Knowledge of a shared code alone must never grant administrative access.
     const emails = (process.env.ADMIN_BOOTSTRAP_EMAILS || '').toLowerCase().split(',').map(s => s.trim());
