@@ -23,7 +23,11 @@ export function createApp(config: Config) {
       objectSrc: ["'none'"], frameAncestors: ["'none'"], upgradeInsecureRequests: config.production ? [] : null,
     } }, crossOriginResourcePolicy: { policy: 'cross-origin' },
   }));
-  app.get('/api/health', (_req, res) => res.json({ ok: true }));
+  app.get('/api/health', (_req, res) => res.json({
+    ok: true,
+    service: 'team-task-hub-backend',
+    version: '2026-10-08-upload-v3',
+  }));
   app.use('/api', rateLimit({ windowMs: 60_000, limit: 600, standardHeaders: 'draft-8', legacyHeaders: false }));
   app.use('/api', (req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
