@@ -43,6 +43,18 @@ test('server must fail closed without credentials', () => {
   assert.equal(readConfig(env).signup, false);
   assert.equal(readConfig({ ...env, ALLOW_SIGNUP: 'true' }).signup, true);
   assert.throws(() => readConfig({ ...env, NODE_ENV: 'production', APP_URL: 'http://hub.test' }), /HTTPS/);
+  assert.throws(() => readConfig({ ...env, BUCKET: 'files' }), /incomplete/);
+  const bucketConfig = readConfig({
+    ...env,
+    AWS_ENDPOINT_URL: 'https://storage.example.test',
+    AWS_ACCESS_KEY_ID: 'access',
+    AWS_SECRET_ACCESS_KEY: 'secret',
+    AWS_S3_BUCKET_NAME: 'files',
+    AWS_DEFAULT_REGION: 'auto',
+    AWS_S3_URL_STYLE: 'path',
+  });
+  assert.equal(bucketConfig.bucket?.name, 'files');
+  assert.equal(bucketConfig.bucket?.forcePathStyle, true);
 });
 test('UUID input validation', () => {
   assert.equal(uuid('d23ae004-c80a-4c52-88a2-3887b966d7bc'), true);
