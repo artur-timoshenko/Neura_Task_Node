@@ -1026,18 +1026,9 @@ GRANT EXECUTE ON FUNCTION public.get_user_stats(timestamptz, timestamptz) TO aut
 REVOKE EXECUTE ON FUNCTION public.handle_new_user() FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.cleanup_expired_submissions() FROM PUBLIC, anon, authenticated;
 
--- ============ Realtime: require authentication for subscriptions ============
-ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "Authenticated users can receive realtime messages" ON realtime.messages;
-CREATE POLICY "Authenticated users can receive realtime messages"
-ON realtime.messages FOR SELECT TO authenticated
-USING (true);
-
-DROP POLICY IF EXISTS "Authenticated users can send realtime messages" ON realtime.messages;
-CREATE POLICY "Authenticated users can send realtime messages"
-ON realtime.messages FOR INSERT TO authenticated
-WITH CHECK (true);
+-- Postgres Changes permissions are enforced by RLS on the subscribed public tables.
+-- Do not alter realtime.messages: managed Supabase projects do not grant ownership
+-- of that internal table to the SQL Editor role.
 COMMIT;
 
 -- 20260620090000_private_helpers.sql
@@ -1299,6 +1290,7 @@ BEGIN;
 CREATE TABLE public.buyer_real_names (
   buyer_id uuid PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
   real_name text NOT NULL DEFAULT '',
+  team text CHECK (team IS NULL OR char_length(team) <= 100),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -1308,10 +1300,14 @@ GRANT ALL ON public.buyer_real_names TO service_role;
 
 ALTER TABLE public.buyer_real_names ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Admins and teamleads manage buyer real names"
+CREATE POLICY "Admins and teamleads can read buyer real names"
+ON public.buyer_real_names FOR SELECT TO authenticated
+USING (private.has_role(auth.uid(), 'admin'::public.app_role) OR private.has_role(auth.uid(), 'teamlead'::public.app_role));
+
+CREATE POLICY "Admins can manage buyer real names"
 ON public.buyer_real_names FOR ALL TO authenticated
-USING (private.has_role(auth.uid(), 'admin'::public.app_role) OR private.has_role(auth.uid(), 'teamlead'::public.app_role))
-WITH CHECK (private.has_role(auth.uid(), 'admin'::public.app_role) OR private.has_role(auth.uid(), 'teamlead'::public.app_role));
+USING (private.has_role(auth.uid(), 'admin'::public.app_role))
+WITH CHECK (private.has_role(auth.uid(), 'admin'::public.app_role));
 
 CREATE TRIGGER update_buyer_real_names_updated_at
 BEFORE UPDATE ON public.buyer_real_names
@@ -2027,9 +2023,11 @@ ALTER POLICY "Admins can update boards" ON public.boards
 ALTER POLICY "Admins can insert boards" ON public.boards
   WITH CHECK ((SELECT private.has_role((SELECT auth.uid()), 'admin'::app_role)));
 
-ALTER POLICY "Admins and teamleads manage buyer real names" ON public.buyer_real_names
-  USING ((SELECT private.has_role((SELECT auth.uid()), 'admin'::app_role) OR private.has_role((SELECT auth.uid()), 'teamlead'::app_role)))
-  WITH CHECK ((SELECT private.has_role((SELECT auth.uid()), 'admin'::app_role) OR private.has_role((SELECT auth.uid()), 'teamlead'::app_role)));
+ALTER POLICY "Admins and teamleads can read buyer real names" ON public.buyer_real_names
+  USING ((SELECT private.has_role((SELECT auth.uid()), 'admin'::app_role) OR private.has_role((SELECT auth.uid()), 'teamlead'::app_role)));
+ALTER POLICY "Admins can manage buyer real names" ON public.buyer_real_names
+  USING ((SELECT private.has_role((SELECT auth.uid()), 'admin'::app_role)))
+  WITH CHECK ((SELECT private.has_role((SELECT auth.uid()), 'admin'::app_role)));
 
 ALTER POLICY "Admins and teamleads can delete guide files" ON public.guide_files
   USING ((SELECT private.has_role((SELECT auth.uid()), 'admin'::app_role) OR private.has_role((SELECT auth.uid()), 'teamlead'::app_role)));
