@@ -1,5 +1,30 @@
 BEGIN;
 
+-- Hidden buyer metadata. It is never exposed to buyers; the API permits
+-- admins to edit it and teamleads to read it.
+ALTER TABLE IF EXISTS public.buyer_real_names
+  ADD COLUMN IF NOT EXISTS team text;
+DO $$
+BEGIN
+  IF to_regclass('public.buyer_real_names') IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'buyer_real_names_team_length'
+  ) THEN
+    ALTER TABLE public.buyer_real_names
+      ADD CONSTRAINT buyer_real_names_team_length CHECK (team IS NULL OR char_length(team) <= 100);
+  END IF;
+END $$;
+
+DROP POLICY IF EXISTS "Admins and teamleads manage buyer real names" ON public.buyer_real_names;
+DROP POLICY IF EXISTS "Admins and teamleads can read buyer real names" ON public.buyer_real_names;
+DROP POLICY IF EXISTS "Admins can manage buyer real names" ON public.buyer_real_names;
+CREATE POLICY "Admins and teamleads can read buyer real names"
+ON public.buyer_real_names FOR SELECT TO authenticated
+USING (private.has_role(auth.uid(), 'admin'::public.app_role) OR private.has_role(auth.uid(), 'teamlead'::public.app_role));
+CREATE POLICY "Admins can manage buyer real names"
+ON public.buyer_real_names FOR ALL TO authenticated
+USING (private.has_role(auth.uid(), 'admin'::public.app_role))
+WITH CHECK (private.has_role(auth.uid(), 'admin'::public.app_role));
+
 -- Projects used to exist only in localStorage. No existing project data is deleted.
 CREATE TABLE IF NOT EXISTS public.hub_projects (
   id text PRIMARY KEY,
