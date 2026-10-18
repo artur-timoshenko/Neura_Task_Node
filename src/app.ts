@@ -82,8 +82,12 @@ export function createApp(config: Config) {
         }
         const table = req.path.split('/')[3];
         const writing = !['GET','HEAD'].includes(req.method);
-        const adminOnly = ['telegram_group_chats','buyer_real_names','user_last_visits'];
+        const adminOnly = ['telegram_group_chats','user_last_visits'];
         if (adminOnly.includes(table) && access.role !== 'admin') throw new HttpError(403, 'Admin only');
+        if (table === 'buyer_real_names') {
+          if (!['admin', 'teamlead'].includes(access.role)) throw new HttpError(403, 'Admin or teamlead only');
+          if (writing && access.role !== 'admin') throw new HttpError(403, 'Admin only');
+        }
         if (writing && ['user_roles','team_memberships','site_settings','boards'].includes(table) && access.role !== 'admin') throw new HttpError(403, 'Admin only');
         if (writing && table === 'profiles' && access.role !== 'admin') {
           if (req.method !== 'PATCH' || !req.body || Array.isArray(req.body) ||
