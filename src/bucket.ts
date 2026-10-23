@@ -8,9 +8,13 @@ const UPLOAD_TTL_SECONDS = 15 * 60;
 const DOWNLOAD_TTL_SECONDS = 60 * 60;
 const PREFIX = 'railway/';
 const OBJECT_ROOT = 'task-files/';
+const PRODUCTION_BROWSER_ORIGINS = [
+  'https://neuratasks.com',
+  'https://www.neuratasks.com',
+];
 
 let cached: { config: NonNullable<Config['bucket']>; client: S3Client } | null = null;
-let corsReady: { client: S3Client; origin: string; promise: Promise<void> } | null = null;
+let corsReady: { client: S3Client; originsKey: string; promise: Promise<void> } | null = null;
 
 function connection(config: Config) {
   if (!config.bucket) {
@@ -34,16 +38,20 @@ function connection(config: Config) {
 }
 
 async function ensureBrowserCors(config: Config, client: S3Client, bucket: string) {
-  if (!corsReady || corsReady.client !== client || corsReady.origin !== config.appUrl) {
+  // APP_URL may still point to the Railway fallback domain while users open the
+  // production custom domain. Keep both origins authorized without using '*'.
+  const allowedOrigins = [...new Set([config.appUrl, ...PRODUCTION_BROWSER_ORIGINS])];
+  const originsKey = allowedOrigins.slice().sort().join('\n');
+  if (!corsReady || corsReady.client !== client || corsReady.originsKey !== originsKey) {
     corsReady = {
       client,
-      origin: config.appUrl,
+      originsKey,
       promise: client.send(new PutBucketCorsCommand({
         Bucket: bucket,
         CORSConfiguration: {
           CORSRules: [{
-            AllowedOrigins: [config.appUrl],
-            AllowedMethods: ['GET', 'HEAD', 'POST'],
+            AllowedOrigins: allowedOrigins,
+            AllowedMethods: ['GET', 'HEAD', 'POST', 'PUT'],
             AllowedHeaders: ['*'],
             ExposeHeaders: ['ETag'],
             MaxAgeSeconds: 3600,
