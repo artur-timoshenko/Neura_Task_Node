@@ -27,6 +27,10 @@ function connection(config: Config) {
         endpoint: config.bucket.endpoint,
         region: config.bucket.region,
         forcePathStyle: config.bucket.forcePathStyle,
+      // Railway Buckets are S3-compatible, but optional AWS SDK checksum
+      // headers can make the signature differ from Railway's calculation.
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
         credentials: {
           accessKeyId: config.bucket.accessKeyId,
           secretAccessKey: config.bucket.secretAccessKey,
